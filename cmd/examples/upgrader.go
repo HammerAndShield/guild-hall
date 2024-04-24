@@ -15,26 +15,31 @@ var upgrader = websocket.Upgrader{
 }
 
 type Server struct {
-	clients map[*websocket.Conn]int
-	rooms   map[int]bool
+	clients map[string]*websocket.Conn
+	rooms   map[int][]string
 	subs    map[int]context.CancelFunc
-	mu      sync.Mutex
+	mu      sync.RWMutex
 }
 
 func NewServer() *Server {
 	return &Server{
-		clients: make(map[*websocket.Conn]int),
-		rooms:   make(map[int]bool),
+		clients: make(map[string]*websocket.Conn),
+		rooms:   make(map[int][]string),
 		subs:    make(map[int]context.CancelFunc),
 	}
 }
 
 func (app *application) echo(w http.ResponseWriter, r *http.Request) {
 	room := r.PathValue("id")
-
 	roomNum, err := strconv.Atoi(room)
 	if err != nil {
 		http.Error(w, "Room not found", http.StatusNotFound)
+		return
+	}
+
+	user := r.URL.Query().Get("user")
+	if user == "" {
+		http.Error(w, "Please provide a username", http.StatusNotFound)
 		return
 	}
 
@@ -45,18 +50,20 @@ func (app *application) echo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	app.server.mu.Lock()
-	app.server.clients[conn] = roomNum
+	app.server.clients[user] = conn
 	if _, exists := app.server.rooms[roomNum]; !exists {
-		app.server.rooms[roomNum] = true
+		app.server.rooms[roomNum] = []string{user}
 		ctx, cancel := context.WithCancel(context.Background())
 		app.server.subs[roomNum] = cancel
 		go app.subscribeToRoom(ctx, roomNum)
+	} else {
+		app.server.rooms[roomNum] = append(app.server.rooms[roomNum], user)
 	}
 	app.server.mu.Unlock()
 
 	defer func() {
 		app.server.mu.Lock()
-		delete(app.server.clients, conn)
+		delete(app.server.clients, user)
 		if len(app.getClientsInRoom(roomNum)) == 0 {
 			delete(app.server.rooms, roomNum)
 			if cancel, exists := app.server.subs[roomNum]; exists {
@@ -74,30 +81,17 @@ func (app *application) echo(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		app.broadcastMessage(message, roomNum, conn)
+		app.broadcastMessage(message, roomNum, user)
 	}
 }
 
 func (app *application) getClientsInRoom(roomNum int) []*websocket.Conn {
+	app.server.mu.RLock()
+	defer app.server.mu.RUnlock()
+
 	var clients []*websocket.Conn
-	for conn, room := range app.server.clients {
-		if roomNum == room {
-			clients = append(clients, conn)
-		}
+	for _, user := range app.server.rooms[roomNum] {
+		clients = append(clients, app.server.clients[user])
 	}
 	return clients
-}
-
-func (server *Server) broadcastMessageDirect(message []byte, roomNum int, sender *websocket.Conn) {
-	server.mu.Lock()
-	defer server.mu.Unlock()
-
-	for conn, room := range server.clients {
-		if roomNum == room && conn != sender {
-			if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
-				delete(server.clients, conn)
-				conn.Close()
-			}
-		}
-	}
 }

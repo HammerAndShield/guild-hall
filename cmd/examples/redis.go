@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/gorilla/websocket"
 	"log"
 	"strconv"
@@ -13,9 +14,9 @@ type StructuredMessage struct {
 	Content []byte `json:"content"`
 }
 
-func (app *application) broadcastMessage(message []byte, roomNum int, sender *websocket.Conn) {
+func (app *application) broadcastMessage(message []byte, roomNum int, user string) {
 	structuredMessage := StructuredMessage{
-		Sender:  sender.RemoteAddr().String(),
+		Sender:  user,
 		Content: message,
 	}
 
@@ -42,34 +43,38 @@ func (app *application) subscribeToRoom(ctx context.Context, roomNum int) {
 			continue
 		}
 
-		senderConn := app.findConnectionByAddr(message.Sender)
-
-		app.sendToRoom(message.Content, roomNum, senderConn)
+		app.sendToRoom(message.Content, roomNum, message.Sender)
 	}
 }
 
-func (app *application) findConnectionByAddr(addr string) *websocket.Conn {
-	app.server.mu.Lock()
-	defer app.server.mu.Unlock()
+func (app *application) findConnectionByUser(user string) (*websocket.Conn, error) {
+	app.server.mu.RLock()
+	defer app.server.mu.RUnlock()
 
-	for conn := range app.server.clients {
-		if conn.RemoteAddr().String() == addr {
-			return conn
-		}
+	conn, exists := app.server.clients[user]
+	if !exists {
+		return nil, errors.New("user not found")
 	}
 
-	return nil
+	return conn, nil
 }
 
-func (app *application) sendToRoom(message []byte, roomNum int, sender *websocket.Conn) {
-	app.server.mu.Lock()
-	defer app.server.mu.Unlock()
+func (app *application) sendToRoom(message []byte, roomNum int, sender string) {
+	app.server.mu.RLock()
+	defer app.server.mu.RUnlock()
 
-	for conn, room := range app.server.clients {
-		if roomNum == room && conn != sender {
+	for _, user := range app.server.rooms[roomNum] {
+		if user != sender {
+			conn, err := app.findConnectionByUser(user)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
 			if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
-				delete(app.server.clients, conn)
+				app.server.mu.Lock()
 				conn.Close()
+				delete(app.server.clients, user)
+				app.server.mu.Unlock()
 			}
 		}
 	}
