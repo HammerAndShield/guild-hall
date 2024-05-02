@@ -15,12 +15,13 @@ type StructuredMessage struct {
 }
 
 func (app *application) broadcastMessage(message []byte, roomNum int, user string) {
-	structuredMessage := StructuredMessage{
-		Sender:  user,
-		Content: message,
+	msg := Message{
+		MessageType: "message",
+		Sender:      user,
+		Message:     string(message),
 	}
 
-	msgBytes, err := json.Marshal(structuredMessage)
+	msgBytes, err := json.Marshal(msg)
 	if err != nil {
 		log.Println(err)
 		return
@@ -36,27 +37,15 @@ func (app *application) subscribeToRoom(ctx context.Context, roomNum int) {
 	ch := pubsub.Channel()
 
 	for msg := range ch {
-		var message StructuredMessage
+		var message Message
 
 		if err := json.Unmarshal([]byte(msg.Payload), &message); err != nil {
 			log.Println(err)
 			continue
 		}
 
-		app.sendToRoom(message.Content, roomNum, message.Sender)
+		app.sendToRoom([]byte(msg.Payload), roomNum, message.Sender)
 	}
-}
-
-func (app *application) findConnectionByUser(user string) (*websocket.Conn, error) {
-	app.server.mu.RLock()
-	defer app.server.mu.RUnlock()
-
-	conn, exists := app.server.clients[user]
-	if !exists {
-		return nil, errors.New("user not found")
-	}
-
-	return conn, nil
 }
 
 func (app *application) sendToRoom(message []byte, roomNum int, sender string) {
@@ -70,7 +59,7 @@ func (app *application) sendToRoom(message []byte, roomNum int, sender string) {
 				log.Println(err)
 				continue
 			}
-			if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
+			if err = conn.WriteMessage(websocket.TextMessage, message); err != nil {
 				app.server.mu.Lock()
 				conn.Close()
 				delete(app.server.clients, user)
@@ -78,4 +67,16 @@ func (app *application) sendToRoom(message []byte, roomNum int, sender string) {
 			}
 		}
 	}
+}
+
+func (app *application) findConnectionByUser(user string) (*websocket.Conn, error) {
+	app.server.mu.RLock()
+	defer app.server.mu.RUnlock()
+
+	conn, exists := app.server.clients[user]
+	if !exists {
+		return nil, errors.New("user not found")
+	}
+
+	return conn, nil
 }
