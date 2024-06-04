@@ -1,0 +1,19 @@
+services:
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: postgres:latest
+    environment:
+      - POSTGRES_DB=guildhall
+      - POSTGRES_PASSWORD=password  # Replace with your desired password
+      - POSTGRES_USER=postgres  # Replace with your desired username
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data: {}
