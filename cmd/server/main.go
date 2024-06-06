@@ -39,14 +39,9 @@ func main() {
 		config: cfg,
 		logger: logger,
 	}
-	app.wg.Add(1)
 
-	go func() {
-		defer app.wg.Done()
-
-		app.logger.Info("Hello from the go function!")
-		app.logger.Debug("Oh no, a debug message!")
-	}()
-
-	app.wg.Wait()
+	err := app.serve()
+	if err != nil {
+		return
+	}
 }
