@@ -17,5 +17,8 @@ func (app *application) routes() http.Handler {
 	r.Use(middleware.CleanPath)
 	r.Use(middleware.Recoverer)
 
+	r.NotFound(app.notFoundResponse)
+	r.MethodNotAllowed(app.methodNotAllowedResponse)
+
 	return r
 }
